@@ -26,11 +26,11 @@
 ## 開発コマンド
 
 ```bash
-npm install
-npm run dev       # 開発サーバー起動
-npm test          # 単体テスト実行（Vitest）
-npm run build     # 本番ビルド（dist/ に出力）
-npm run preview   # 本番ビルドのプレビュー
+pnpm install
+pnpm dev       # 開発サーバー起動
+pnpm test      # 単体テスト実行（Vitest）
+pnpm build     # 本番ビルド（dist/ に出力）
+pnpm preview   # 本番ビルドのプレビュー
 ```
 
 ## GitHub Pages へのデプロイ
