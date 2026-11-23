@@ -4,6 +4,7 @@ import {
   calculateClearBonus,
   createBattleRequest,
   createInitialGameState,
+  getRunElapsedMs,
   isTileSolid,
   resolveBattleAnswer,
   roomKeyOf,
@@ -139,5 +140,11 @@ describe('Zelda-style game worlds and engine', () => {
     expect(bossRoom.bossDefeated).toBe(true);
     expect(bossRoom.pickups.some((p) => p.kind === 'tristar')).toBe(true);
     expect(calculateClearBonus(4)).toBe(900);
+  });
+
+  it('measures elapsed run time from monotonic wall-clock timestamps without clamping', () => {
+    expect(getRunElapsedMs(1000, 1000)).toBe(0);
+    expect(getRunElapsedMs(1000, 950)).toBe(0);
+    expect(getRunElapsedMs(1000, 16543)).toBe(15543);
   });
 });

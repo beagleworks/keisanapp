@@ -509,3 +509,8 @@ export function finishRoomTransition(state: GameRunState): void {
 export function calculateClearBonus(hearts: number): number {
   return 500 + Math.max(0, hearts) * 100;
 }
+
+/** Compute monotonic wall-clock elapsed milliseconds for a run, independent of physics dt clamping. */
+export function getRunElapsedMs(startMs: number, nowMs: number): number {
+  return Math.max(0, nowMs - startMs);
+}

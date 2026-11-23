@@ -11,6 +11,7 @@ import {
   createInitialGameState,
   finishRoomTransition,
   getCurrentRoom,
+  getRunElapsedMs,
   getSwordHitbox,
   isBoxBlocked,
   resolveBattleAnswer,
@@ -108,6 +109,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
   const touchDirRef = useRef<Direction | null>(null);
   const lockedDoorNoticeCooldownRef = useRef<number>(0);
   const endedRef = useRef<boolean>(false);
+  const runStartMsRef = useRef<number>(performance.now());
 
   const [touchDir, setTouchDir] = useState<Direction | null>(null);
   const [activeBattle, setActiveBattle] = useState<BattleRequest | null>(null);
@@ -120,6 +122,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
     heldKeysRef.current.clear();
     touchDirRef.current = null;
     endedRef.current = false;
+    runStartMsRef.current = performance.now();
     setTouchDir(null);
     setActiveBattle(null);
     setHud(buildHudSnapshot(initial));
@@ -163,6 +166,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         };
       }
       const outcome = resolveBattleAnswer(state, activeBattle, choice, speedBonus);
+      state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
       // Keep the world paused until the battle feedback overlay closes so the player sees the action resume
       if (state.status === 'playing') {
         state.status = 'battle';
@@ -284,8 +288,8 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
       const state = stateRef.current;
       const timeSec = now / 1000;
 
-      if (state.status === 'playing') {
-        state.elapsedMs += dt * 1000;
+      if (state.status === 'playing' || state.status === 'battle') {
+        state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
       }
 
       if (state.shakeTimer > 0) {
@@ -638,6 +642,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
               spawnParticles(state, pickup.x, pickup.y, '#FB7185', 10);
             } else if (pickup.kind === 'tristar' && !endedRef.current) {
               endedRef.current = true;
+              state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
               const clearBonus = calculateClearBonus(player.hearts);
               state.score += clearBonus;
               state.status = 'victory';
