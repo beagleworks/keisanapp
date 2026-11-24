@@ -1,5 +1,15 @@
 export type DeckId = 'tashizan1' | 'tashizan2' | 'hikizan1' | 'hikizan2';
 
+export type GameStageId = DeckId | 'mixed';
+
+export const ALL_GAME_STAGE_IDS: readonly GameStageId[] = [
+  'tashizan1',
+  'tashizan2',
+  'hikizan1',
+  'hikizan2',
+  'mixed',
+] as const;
+
 export type Operator = '+' | '-';
 
 export interface MathCard {
@@ -154,6 +164,45 @@ export const DECK_MAP: Record<DeckId, DeckDefinition> = {
   hikizan1: DECKS[2],
   hikizan2: DECKS[3],
 };
+
+export const ALL_CARDS: readonly MathCard[] = DECKS.flatMap((deck) => deck.cards);
+
+export function getCardsForStage(stageId: GameStageId): readonly MathCard[] {
+  if (stageId === 'mixed') {
+    return ALL_CARDS;
+  }
+  return DECK_MAP[stageId].cards;
+}
+
+/**
+ * Build a shuffled question queue for a game stage.
+ * For the comprehensive 'mixed' stage, interleaves randomized blocks from all 4 decks
+ * so players reliably experience every operation type in a single run.
+ */
+export function buildStageQuestionQueue(
+  stageId: GameStageId,
+  rng: () => number = Math.random,
+): MathCard[] {
+  if (stageId !== 'mixed') {
+    return shuffleCards(DECK_MAP[stageId].cards, rng);
+  }
+
+  const buckets = DECKS.map((deck) => shuffleCards(deck.cards, rng));
+  const queue: MathCard[] = [];
+  const maxLen = Math.max(...buckets.map((b) => b.length));
+
+  for (let i = 0; i < maxLen; i++) {
+    const round: MathCard[] = [];
+    for (const bucket of buckets) {
+      if (i < bucket.length) {
+        round.push(bucket[i]);
+      }
+    }
+    queue.push(...shuffleCards(round, rng));
+  }
+
+  return queue;
+}
 
 export function formatOperator(operator: Operator): string {
   return operator === '+' ? '＋' : '−';
