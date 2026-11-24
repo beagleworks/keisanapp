@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { GameStageId } from '../data/decks';
 import { sound } from '../utils/sound';
 import { BattleOverlay } from './BattleOverlay';
@@ -113,12 +113,22 @@ function buildHudSnapshot(state: GameRunState): HudSnapshot {
   };
 }
 
+function useLazyRef<T>(init: () => T): RefObject<T> {
+  const ref = useRef<T | null>(null);
+  if (ref.current === null) {
+    ref.current = init();
+  }
+  return ref as RefObject<T>;
+}
+
 export function GameCanvas({ stageId, stageHighScore, runNonce, onGameEnd }: GameCanvasProps) {
   const theme = WORLD_THEMES[stageId];
+  const runKey = `${stageId}:${runNonce}`;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef<GameRunState>(createInitialGameState(stageId));
-  const heldKeysRef = useRef<Set<string>>(new Set());
+  const stateRef = useLazyRef<GameRunState>(() => createInitialGameState(stageId));
+  const initializedRunKeyRef = useRef<string>(runKey);
+  const heldKeysRef = useLazyRef<Set<string>>(() => new Set());
   const touchDirRef = useRef<Direction | null>(null);
   const lockedDoorNoticeCooldownRef = useRef<number>(0);
   const endedRef = useRef<boolean>(false);
@@ -129,16 +139,20 @@ export function GameCanvas({ stageId, stageHighScore, runNonce, onGameEnd }: Gam
 
   // Re-initialize a fresh random dungeon whenever stageId or runNonce changes
   useEffect(() => {
-    const initial = createInitialGameState(stageId);
-    stateRef.current = initial;
-    heldKeysRef.current.clear();
-    touchDirRef.current = null;
-    endedRef.current = false;
-    setTouchDir(null);
-    setActiveBattle(null);
-    setHud(buildHudSnapshot(initial));
+    if (initializedRunKeyRef.current !== runKey) {
+      const initial = createInitialGameState(stageId);
+      stateRef.current = initial;
+      initializedRunKeyRef.current = runKey;
+      heldKeysRef.current.clear();
+      touchDirRef.current = null;
+      lockedDoorNoticeCooldownRef.current = 0;
+      endedRef.current = false;
+      setTouchDir(null);
+      setActiveBattle(null);
+      setHud(buildHudSnapshot(initial));
+    }
     sound.playStart();
-  }, [stageId, runNonce]);
+  }, [stageId, runKey, stateRef, heldKeysRef]);
 
   const handleTouchDirChange = useCallback((dir: Direction | null) => {
     touchDirRef.current = dir;
@@ -300,9 +314,13 @@ export function GameCanvas({ stageId, stageHighScore, runNonce, onGameEnd }: Gam
       if (state.shakeTimer > 0) {
         state.shakeTimer = Math.max(0, state.shakeTimer - dt);
       }
+      let toastExpired = false;
       if (state.toast) {
         state.toast.timer -= dt;
-        if (state.toast.timer <= 0) state.toast = null;
+        if (state.toast.timer <= 0) {
+          state.toast = null;
+          toastExpired = true;
+        }
       }
       if (lockedDoorNoticeCooldownRef.current > 0) {
         lockedDoorNoticeCooldownRef.current -= dt;
@@ -698,7 +716,7 @@ export function GameCanvas({ stageId, stageHighScore, runNonce, onGameEnd }: Gam
       }
 
       hudSyncAccum += dt;
-      if (hudSyncAccum >= 0.1) {
+      if (toastExpired || (state.status === 'playing' && hudSyncAccum >= 0.1)) {
         hudSyncAccum = 0;
         setHud(buildHudSnapshot(state));
       }
