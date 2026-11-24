@@ -1,13 +1,18 @@
-import { DECKS, type DeckId } from '../data/decks';
+import { DECKS, type DeckId, type GameStageId } from '../data/decks';
+import { WORLD_THEME_LIST } from '../game/worlds';
 import { formatJapaneseTime } from '../utils/formatTime';
-import type { AppRecords } from '../utils/storage';
+import {
+  getClearedStageCount,
+  getTotalGameHighScore,
+  type AppRecords,
+} from '../utils/storage';
 
 interface HomeScreenProps {
   records: AppRecords;
   soundEnabled: boolean;
   onToggleSound: () => void;
   onSelectDeck: (deckId: DeckId) => void;
-  onOpenGame: (deckId?: DeckId) => void;
+  onOpenGame: (stageId?: GameStageId) => void;
 }
 
 export function HomeScreen({
@@ -17,7 +22,8 @@ export function HomeScreen({
   onSelectDeck,
   onOpenGame,
 }: HomeScreenProps) {
-  const clearedGameCount = DECKS.filter((d) => records.game[d.id]?.cleared).length;
+  const clearedGameCount = getClearedStageCount(records);
+  const totalHighScore = getTotalGameHighScore(records);
 
   return (
     <div className="home-page">
@@ -102,17 +108,20 @@ export function HomeScreen({
               <div className="pixel-shield">⚔️</div>
             </div>
             <div className="game-banner-body">
-              <span className="game-banner-badge">レトロ ぼうけん RPG</span>
+              <span className="game-banner-badge">ランダムだんじょん RPG・ぜん5めん</span>
               <h2 id="section-game" className="game-banner-title">
                 けいさんクエスト
               </h2>
               <p className="game-banner-desc">
-                もりの だんじょんを たんけんしよう！ てきや たからばこで
-                けいさんバトルに かって、てんすうと かぎを あつめて ボスを たおせ！
+                あそぶたびに ルートが かわる だんじょんを たんけんしよう！
+                けいさんバトルと たからばこで ハイスコアを かせいで、そうごうもんだいの
+                5めんまで こうりゃくしよう！
               </p>
               <div className="game-banner-meta">
-                <span>👑 クリアした しんでん：{clearedGameCount} / 4</span>
-                <span>📱 スマホ・💻 パソコン りょうほう たいおう</span>
+                <span>
+                  👑 クリア：{clearedGameCount} / {WORLD_THEME_LIST.length}
+                </span>
+                <span className="mono-num">💎 ごうけい ハイスコア：{totalHighScore}てん</span>
               </div>
             </div>
             <button

@@ -18,6 +18,8 @@ function targetEmoji(kind: BattleRequest['targetKind']): string {
       return '🎁';
     case 'boss':
       return '👑';
+    case 'goldenSlime':
+      return '✨';
     case 'octorok':
       return '🐙';
     case 'bat':
