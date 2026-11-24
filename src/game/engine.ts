@@ -1,4 +1,10 @@
-import { DECK_MAP, generateChoices, shuffleCards, type DeckId, type MathCard } from '../data/decks';
+import {
+  buildStageQuestionQueue,
+  generateChoices,
+  type GameStageId,
+  type MathCard,
+} from '../data/decks';
+import { generateRandomDungeon } from './generator';
 import {
   CANVAS_HEIGHT,
   CANVAS_WIDTH,
@@ -8,6 +14,7 @@ import {
   type ActiveEnemy,
   type BattleOutcome,
   type BattleRequest,
+  type ClearBonusBreakdown,
   type Direction,
   type GameRunState,
   type RoomState,
@@ -20,65 +27,22 @@ export function roomKeyOf(rx: number, ry: number): string {
 }
 
 export function createInitialGameState(
-  deckId: DeckId,
+  stageId: GameStageId,
   rng: () => number = Math.random,
 ): GameRunState {
-  const theme = WORLD_THEMES[deckId];
-  const rooms: Record<string, RoomState> = {};
-
-  for (const tpl of theme.rooms) {
-    const key = roomKeyOf(tpl.rx, tpl.ry);
-    const tiles: TileChar[][] = tpl.layout.map((rowStr) =>
-      rowStr.split('').map((ch) => ch as TileChar),
-    );
-    const enemies: ActiveEnemy[] = tpl.enemies.map((e) => ({
-      id: e.id,
-      kind: e.kind,
-      name: e.name,
-      x: e.col * TILE_SIZE + TILE_SIZE / 2,
-      y: e.row * TILE_SIZE + TILE_SIZE / 2,
-      vx: 0,
-      vy: 0,
-      dir: 'down',
-      hp: e.hp,
-      maxHp: e.hp,
-      speed: e.speed,
-      aiTimer: 0.4 + rng() * 0.8,
-      hurtTimer: 0,
-      alive: true,
-    }));
-
-    rooms[key] = {
-      rx: tpl.rx,
-      ry: tpl.ry,
-      name: tpl.name,
-      tiles,
-      enemies,
-      chests: tpl.chests.map((c) => ({ ...c, opened: false })),
-      pickups: tpl.pickups.map((p, idx) => ({
-        id: p.id,
-        x: p.col * TILE_SIZE + TILE_SIZE / 2,
-        y: p.row * TILE_SIZE + TILE_SIZE / 2,
-        kind: p.kind,
-        collected: false,
-        bobPhase: idx * 1.4,
-      })),
-      visited: tpl.rx === theme.startRoom.rx && tpl.ry === theme.startRoom.ry,
-      isBossRoom: Boolean(tpl.isBossRoom),
-      bossDefeated: false,
-    };
-  }
+  const theme = WORLD_THEMES[stageId];
+  const dungeon = generateRandomDungeon(stageId, rng);
 
   return {
-    deckId,
+    stageId,
     worldName: theme.worldName,
-    rooms,
-    currentRx: theme.startRoom.rx,
-    currentRy: theme.startRoom.ry,
+    rooms: dungeon.rooms,
+    currentRx: dungeon.startRx,
+    currentRy: dungeon.startRy,
     player: {
-      x: theme.startRoom.col * TILE_SIZE + TILE_SIZE / 2,
-      y: theme.startRoom.row * TILE_SIZE + TILE_SIZE / 2,
-      dir: 'up',
+      x: dungeon.startCol * TILE_SIZE + TILE_SIZE / 2,
+      y: dungeon.startRow * TILE_SIZE + TILE_SIZE / 2,
+      dir: 'down',
       hearts: 5,
       maxHearts: 5,
       keys: 0,
@@ -96,17 +60,16 @@ export function createInitialGameState(
     maxCombo: 0,
     correctCount: 0,
     wrongCount: 0,
-    elapsedMs: 0,
     status: 'playing',
     toast: {
-      text: `${theme.worldName}へ ようこそ！ たからばこで かぎを さがそう！`,
+      text: `${theme.worldName}へ ようこそ！ ランダムな だんじょんで かぎと ハイスコアを ねらおう！`,
       timer: 3.6,
     },
     shakeTimer: 0,
     particles: [],
     floatingTexts: [],
     transition: null,
-    questionQueue: shuffleCards(DECK_MAP[deckId].cards, rng),
+    questionQueue: buildStageQuestionQueue(stageId, rng),
     missedCards: [],
   };
 }
@@ -126,7 +89,13 @@ export function getTileAt(room: RoomState, col: number, row: number): TileChar {
   return room.tiles[row][col];
 }
 
-export function isBoxBlocked(room: RoomState, x: number, y: number, halfW: number, halfH: number): boolean {
+export function isBoxBlocked(
+  room: RoomState,
+  x: number,
+  y: number,
+  halfW: number,
+  halfH: number,
+): boolean {
   const minCol = Math.floor((x - halfW) / TILE_SIZE);
   const maxCol = Math.floor((x + halfW) / TILE_SIZE);
   const minRow = Math.floor((y - halfH) / TILE_SIZE);
@@ -134,14 +103,12 @@ export function isBoxBlocked(room: RoomState, x: number, y: number, halfW: numbe
 
   for (let row = minRow; row <= maxRow; row++) {
     for (let col = minCol; col <= maxCol; col++) {
-      // Allow moving slightly past room boundary through open doorway tiles
       if (row < 0 || row >= ROOM_ROWS || col < 0 || col >= ROOM_COLS) {
         continue;
       }
       if (isTileSolid(room.tiles[row][col])) {
         return true;
       }
-      // Closed chests are solid blocks
       for (const chest of room.chests) {
         if (chest.col === col && chest.row === row) {
           return true;
@@ -156,14 +123,12 @@ export function drawNextQuestion(
   state: GameRunState,
   rng: () => number = Math.random,
 ): MathCard {
-  // Re-ask a missed card occasionally for active reinforcement
   if (state.missedCards.length > 0 && rng() < 0.45) {
-    const missed = state.missedCards.shift()!;
-    return missed;
+    return state.missedCards.shift()!;
   }
 
   if (state.questionQueue.length === 0) {
-    state.questionQueue = shuffleCards(DECK_MAP[state.deckId].cards, rng);
+    state.questionQueue = buildStageQuestionQueue(state.stageId, rng);
   }
   return state.questionQueue.shift()!;
 }
@@ -251,7 +216,6 @@ export function resolveBattleAnswer(
     state.player.invulnTimer = 1.4;
     state.shakeTimer = 0.28;
 
-    // Gentle knockback away from facing direction
     const knockSpeed = 140;
     if (state.player.dir === 'up') state.player.knockVy = knockSpeed;
     if (state.player.dir === 'down') state.player.knockVy = -knockSpeed;
@@ -276,11 +240,10 @@ export function resolveBattleAnswer(
     };
   }
 
-  // Correct answer!
   state.combo += 1;
   state.maxCombo = Math.max(state.maxCombo, state.combo);
   state.correctCount += 1;
-  const comboBonus = (state.combo - 1) * 20;
+  const comboBonus = (state.combo - 1) * 25;
   const strikeBonus = request.firstStrike ? 30 : 0;
   const flameBonus = state.player.hasFlameSword ? 30 : 0;
 
@@ -307,7 +270,7 @@ export function resolveBattleAnswer(
       } else if (chest.reward === 'flameSword') {
         points += 100;
         state.player.hasFlameSword = true;
-        msg = '🔥 ほのおの けんを てにいれた！ パワーアップ！';
+        msg = '🔥 ほのおの けんを てにいれた！ こうげきボーナスUP！';
         addFloatingText(state, cx, cy - 16, 'ほのおのけん!', '#FB923C');
       }
     }
@@ -325,7 +288,6 @@ export function resolveBattleAnswer(
     };
   }
 
-  // Enemy or Boss hit
   const enemy = room?.enemies.find((e) => e.id === request.targetId);
   if (!enemy || !enemy.alive) {
     state.status = 'playing';
@@ -339,28 +301,37 @@ export function resolveBattleAnswer(
   }
 
   const isBoss = enemy.kind === 'boss';
+  const isGolden = enemy.kind === 'goldenSlime';
   enemy.hp -= 1;
   enemy.hurtTimer = 0.45;
   state.shakeTimer = isBoss ? 0.3 : 0.16;
 
-  let points = (isBoss ? 150 : 100) + speedBonus + comboBonus + strikeBonus + flameBonus;
+  let points =
+    (isBoss ? 150 : isGolden ? 350 : 100) + speedBonus + comboBonus + strikeBonus + flameBonus;
   let defeated = false;
   let msg = `せいかい！ ${enemy.name}に ヒット！ +${points}てん`;
 
-  spawnParticles(state, enemy.x, enemy.y, isBoss ? '#FACC15' : '#FFFFFF', isBoss ? 18 : 12, rng);
+  spawnParticles(
+    state,
+    enemy.x,
+    enemy.y,
+    isBoss || isGolden ? '#FACC15' : '#FFFFFF',
+    isBoss || isGolden ? 20 : 12,
+    rng,
+  );
 
   if (enemy.hp <= 0) {
     enemy.alive = false;
     defeated = true;
 
     if (isBoss) {
-      points += 500;
+      const bossKillBonus = state.stageId === 'mixed' ? 800 : 500;
+      points += bossKillBonus;
       room.bossDefeated = true;
       msg = `🎉 ${enemy.name}を たおした！ ひかりの トライスターを とろう！`;
       spawnParticles(state, enemy.x, enemy.y, '#FDE047', 28, rng);
       addFloatingText(state, enemy.x, enemy.y - 18, `+${points}てん!`, '#FDE047');
 
-      // Spawn the iconic golden Tristar in the center of the boss room!
       room.pickups.push({
         id: 'tristar-goal',
         x: Math.floor(ROOM_COLS / 2) * TILE_SIZE + TILE_SIZE / 2,
@@ -370,11 +341,21 @@ export function resolveBattleAnswer(
         bobPhase: 0,
       });
       state.toast = { text: '⭐ ひかりの トライスターが あらわれた！ さわって クリア！', timer: 4.5 };
+    } else if (isGolden) {
+      msg = `✨ レアてき ${enemy.name}を たおした！ +${points}てん！`;
+      addFloatingText(state, enemy.x, enemy.y - 16, `+${points}!!`, '#FDE047');
+      room.pickups.push({
+        id: `drop-gold-${enemy.id}`,
+        x: enemy.x,
+        y: enemy.y,
+        kind: 'rupeeGold',
+        collected: false,
+        bobPhase: 0,
+      });
     } else {
       msg = `せいかい！ ${enemy.name}を たおした！ +${points}てん`;
       addFloatingText(state, enemy.x, enemy.y - 14, `+${points}`, '#FDE047');
 
-      // Drop loot: heart if player is injured, otherwise a rupee!
       const dropKind =
         state.player.hearts < state.player.maxHearts && rng() < 0.45 ? 'heart' : 'rupeeGreen';
       room.pickups.push({
@@ -387,12 +368,17 @@ export function resolveBattleAnswer(
       });
     }
   } else {
-    // Boss survived hit: move boss back slightly so player doesn't instantly re-collide
     const dx = enemy.x - state.player.x;
     const dy = enemy.y - state.player.y;
     const len = Math.hypot(dx, dy) || 1;
-    const nx = Math.max(TILE_SIZE * 2.5, Math.min(CANVAS_WIDTH - TILE_SIZE * 2.5, enemy.x + (dx / len) * 64));
-    const ny = Math.max(TILE_SIZE * 2.5, Math.min(CANVAS_HEIGHT - TILE_SIZE * 2.5, enemy.y + (dy / len) * 64));
+    const nx = Math.max(
+      TILE_SIZE * 2.5,
+      Math.min(CANVAS_WIDTH - TILE_SIZE * 2.5, enemy.x + (dx / len) * 64),
+    );
+    const ny = Math.max(
+      TILE_SIZE * 2.5,
+      Math.min(CANVAS_HEIGHT - TILE_SIZE * 2.5, enemy.y + (dy / len) * 64),
+    );
     enemy.x = nx;
     enemy.y = ny;
     state.player.invulnTimer = 0.7;
@@ -434,22 +420,33 @@ export function getSwordHitbox(player: GameRunState['player']): {
 
 export function checkRoomTransition(state: GameRunState): Direction | null {
   const { player } = state;
+  const room = getCurrentRoom(state);
   const margin = 8;
 
-  if (player.x < margin && state.rooms[roomKeyOf(state.currentRx - 1, state.currentRy)]) {
+  if (
+    player.x < margin &&
+    room.exits.left === 'open' &&
+    state.rooms[roomKeyOf(state.currentRx - 1, state.currentRy)]
+  ) {
     return 'left';
   }
   if (
     player.x > CANVAS_WIDTH - margin &&
+    room.exits.right === 'open' &&
     state.rooms[roomKeyOf(state.currentRx + 1, state.currentRy)]
   ) {
     return 'right';
   }
-  if (player.y < margin && state.rooms[roomKeyOf(state.currentRx, state.currentRy - 1)]) {
+  if (
+    player.y < margin &&
+    room.exits.up === 'open' &&
+    state.rooms[roomKeyOf(state.currentRx, state.currentRy - 1)]
+  ) {
     return 'up';
   }
   if (
     player.y > CANVAS_HEIGHT - margin &&
+    room.exits.down === 'open' &&
     state.rooms[roomKeyOf(state.currentRx, state.currentRy + 1)]
   ) {
     return 'down';
@@ -485,10 +482,22 @@ export function finishRoomTransition(state: GameRunState): void {
   room.visited = true;
 
   const inset = TILE_SIZE * 1.15;
+  const centerX = Math.floor(ROOM_COLS / 2) * TILE_SIZE + TILE_SIZE / 2;
+  const centerY = Math.floor(ROOM_ROWS / 2) * TILE_SIZE + TILE_SIZE / 2;
+
   if (tr.dir === 'right') state.player.x = inset;
   if (tr.dir === 'left') state.player.x = CANVAS_WIDTH - inset;
   if (tr.dir === 'down') state.player.y = inset;
   if (tr.dir === 'up') state.player.y = CANVAS_HEIGHT - inset;
+
+  // Center on doorway axis if destination has a narrow boss gate or obstacle edge
+  if (isBoxBlocked(room, state.player.x, state.player.y, 9, 9)) {
+    if (tr.dir === 'left' || tr.dir === 'right') {
+      state.player.y = centerY;
+    } else {
+      state.player.x = centerX;
+    }
+  }
 
   state.player.invulnTimer = Math.max(state.player.invulnTimer, 0.45);
   state.particles = [];
@@ -499,18 +508,41 @@ export function finishRoomTransition(state: GameRunState): void {
     const boss = room.enemies.find((e) => e.kind === 'boss' && e.alive);
     if (boss) {
       state.toast = {
-        text: `⚡ ボス「${boss.name}」が あらわれた！ 3かい せいかいして たおそう！`,
+        text: `⚡ ボス「${boss.name}」が あらわれた！ ${boss.hp}かい せいかいして たおそう！`,
         timer: 3.5,
       };
     }
   }
 }
 
-export function calculateClearBonus(hearts: number): number {
-  return 500 + Math.max(0, hearts) * 100;
+export function unlockDoorAt(room: RoomState, col: number, row: number): void {
+  room.tiles[row][col] = ',';
+  if (row === 0 && room.exits.up === 'locked') room.exits.up = 'open';
+  if (row === ROOM_ROWS - 1 && room.exits.down === 'locked') room.exits.down = 'open';
+  if (col === 0 && room.exits.left === 'locked') room.exits.left = 'open';
+  if (col === ROOM_COLS - 1 && room.exits.right === 'locked') room.exits.right = 'open';
 }
 
-/** Compute monotonic wall-clock elapsed milliseconds for a run, independent of physics dt clamping. */
-export function getRunElapsedMs(startMs: number, nowMs: number): number {
-  return Math.max(0, nowMs - startMs);
+export function calculateClearBonusBreakdown(state: GameRunState): ClearBonusBreakdown {
+  const stageClear = state.stageId === 'mixed' ? 800 : 500;
+  const lifeBonus = Math.max(0, state.player.hearts) * 100;
+  const noMissBonus = state.wrongCount === 0 && state.correctCount > 0 ? 400 : 0;
+
+  const allChests = Object.values(state.rooms).flatMap((r) => r.chests);
+  const allChestsBonus =
+    allChests.length > 0 && allChests.every((c) => c.opened) ? 300 : 0;
+
+  const allEnemies = Object.values(state.rooms).flatMap((r) => r.enemies);
+  const allEnemiesBonus =
+    allEnemies.length > 0 && allEnemies.every((e) => !e.alive) ? 300 : 0;
+
+  const total = stageClear + lifeBonus + noMissBonus + allChestsBonus + allEnemiesBonus;
+  return {
+    stageClear,
+    lifeBonus,
+    noMissBonus,
+    allChestsBonus,
+    allEnemiesBonus,
+    total,
+  };
 }

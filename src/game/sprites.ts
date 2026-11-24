@@ -166,14 +166,32 @@ function drawPickup(ctx: CanvasRenderingContext2D, pickup: ActivePickup, timeSec
   // Shadow
   drawPixelRect(ctx, cx - 6, Math.round(pickup.y) + 8, 12, 4, 'rgba(0,0,0,0.22)');
 
-  if (pickup.kind === 'rupeeGreen' || pickup.kind === 'rupeeBlue') {
-    const main = pickup.kind === 'rupeeGreen' ? '#22C55E' : '#38BDF8';
-    const hi = pickup.kind === 'rupeeGreen' ? '#86EFAC' : '#BAE6FD';
-    const dark = pickup.kind === 'rupeeGreen' ? '#15803D' : '#0369A1';
+  if (pickup.kind === 'rupeeGreen' || pickup.kind === 'rupeeBlue' || pickup.kind === 'rupeeGold') {
+    const main =
+      pickup.kind === 'rupeeGold'
+        ? '#FACC15'
+        : pickup.kind === 'rupeeGreen'
+          ? '#22C55E'
+          : '#38BDF8';
+    const hi =
+      pickup.kind === 'rupeeGold'
+        ? '#FEF9C3'
+        : pickup.kind === 'rupeeGreen'
+          ? '#86EFAC'
+          : '#BAE6FD';
+    const dark =
+      pickup.kind === 'rupeeGold'
+        ? '#B45309'
+        : pickup.kind === 'rupeeGreen'
+          ? '#15803D'
+          : '#0369A1';
     drawPixelRect(ctx, cx - 3, cy - 9, 6, 3, dark);
     drawPixelRect(ctx, cx - 6, cy - 6, 12, 12, main);
     drawPixelRect(ctx, cx - 3, cy + 6, 6, 3, dark);
     drawPixelRect(ctx, cx - 3, cy - 5, 4, 8, hi);
+    if (pickup.kind === 'rupeeGold' && Math.floor(timeSec * 8) % 2 === 0) {
+      drawPixelRect(ctx, cx + 6, cy - 10, 3, 3, '#FFFFFF');
+    }
     return;
   }
 
@@ -275,14 +293,20 @@ function drawEnemy(
   drawPixelRect(ctx, cx - 10, cy + 9, 20, 5, 'rgba(0,0,0,0.25)');
   const ey = cy - hop;
 
-  if (enemy.kind === 'slime') {
-    const col = flash ? '#FFFFFF' : '#34D399';
-    const dark = flash ? '#E2E8F0' : '#059669';
+  if (enemy.kind === 'slime' || enemy.kind === 'goldenSlime') {
+    const isGold = enemy.kind === 'goldenSlime';
+    const col = flash ? '#FFFFFF' : isGold ? '#FACC15' : '#34D399';
+    const dark = flash ? '#E2E8F0' : isGold ? '#B45309' : '#059669';
+    const hi = isGold ? '#FEF9C3' : '#A7F3D0';
     drawPixelRect(ctx, cx - 11, ey - 6, 22, 16, dark);
     drawPixelRect(ctx, cx - 9, ey - 9, 18, 17, col);
-    drawPixelRect(ctx, cx - 6, ey - 6, 5, 4, '#A7F3D0');
+    drawPixelRect(ctx, cx - 6, ey - 6, 5, 4, hi);
     drawPixelRect(ctx, cx - 6, ey - 1, 4, 4, '#0F172A');
     drawPixelRect(ctx, cx + 2, ey - 1, 4, 4, '#0F172A');
+    if (isGold && Math.floor(timeSec * 8) % 2 === 0) {
+      drawPixelRect(ctx, cx + 8, ey - 13, 4, 4, '#FEF08A');
+      drawPixelRect(ctx, cx - 12, ey - 11, 3, 3, '#FFFFFF');
+    }
     return;
   }
 
