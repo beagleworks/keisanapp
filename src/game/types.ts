@@ -1,4 +1,4 @@
-import type { DeckId, MathCard } from '../data/decks';
+import type { GameStageId, MathCard } from '../data/decks';
 
 export const ROOM_COLS = 15;
 export const ROOM_ROWS = 11;
@@ -7,6 +7,17 @@ export const CANVAS_WIDTH = ROOM_COLS * TILE_SIZE; // 480
 export const CANVAS_HEIGHT = ROOM_ROWS * TILE_SIZE; // 352
 
 export type Direction = 'up' | 'down' | 'left' | 'right';
+
+export type RoomExitKind = 'none' | 'open' | 'locked';
+
+export interface RoomExits {
+  up: RoomExitKind;
+  down: RoomExitKind;
+  left: RoomExitKind;
+  right: RoomExitKind;
+}
+
+export type RoomRole = 'start' | 'key' | 'treasure' | 'spring' | 'gate' | 'boss';
 
 /**
  * Tile symbols used in 15x11 room layouts:
@@ -21,44 +32,13 @@ export type Direction = 'up' | 'down' | 'left' | 'right';
  */
 export type TileChar = '.' | ',' | '#' | '~' | 'B' | 'T' | 'F' | 'L';
 
-export type EnemyKind = 'slime' | 'octorok' | 'bat' | 'skeleton' | 'boss';
+export type EnemyKind = 'slime' | 'octorok' | 'bat' | 'skeleton' | 'goldenSlime' | 'boss';
 
 export type ChestReward = 'key' | 'bigRupee' | 'flameSword';
 
-export interface EnemySpawn {
-  id: string;
-  kind: EnemyKind;
+export interface EnemyArchetype {
+  kind: Exclude<EnemyKind, 'boss' | 'goldenSlime'>;
   name: string;
-  col: number;
-  row: number;
-  hp: number;
-  speed: number;
-}
-
-export interface ChestSpawn {
-  id: string;
-  col: number;
-  row: number;
-  reward: ChestReward;
-  label: string;
-}
-
-export interface PickupSpawn {
-  id: string;
-  col: number;
-  row: number;
-  kind: 'rupeeGreen' | 'rupeeBlue' | 'heart';
-}
-
-export interface RoomTemplate {
-  rx: number; // 0..2
-  ry: number; // 0..1
-  name: string;
-  layout: readonly string[]; // 11 strings of length 15
-  enemies: readonly EnemySpawn[];
-  chests: readonly ChestSpawn[];
-  pickups: readonly PickupSpawn[];
-  isBossRoom?: boolean;
 }
 
 export interface WorldPalette {
@@ -79,14 +59,18 @@ export interface WorldPalette {
 }
 
 export interface WorldTheme {
-  deckId: DeckId;
+  stageId: GameStageId;
+  stageNumber: number;
+  badgeName: string;
+  shortBadge: string;
+  badgeColor: string;
   worldName: string;
   subtitle: string;
   bossName: string;
-  bossKindLabel: string;
+  bossHp: number;
   palette: WorldPalette;
-  rooms: readonly RoomTemplate[];
-  startRoom: { rx: number; ry: number; col: number; row: number };
+  enemyPool: readonly EnemyArchetype[];
+  roomNames: Record<RoomRole, string>;
 }
 
 export interface ActiveEnemy {
@@ -119,7 +103,7 @@ export interface ActivePickup {
   id: string;
   x: number;
   y: number;
-  kind: 'rupeeGreen' | 'rupeeBlue' | 'heart' | 'tristar';
+  kind: 'rupeeGreen' | 'rupeeBlue' | 'rupeeGold' | 'heart' | 'tristar';
   collected: boolean;
   bobPhase: number;
 }
@@ -127,7 +111,9 @@ export interface ActivePickup {
 export interface RoomState {
   rx: number;
   ry: number;
+  role: RoomRole;
   name: string;
+  exits: RoomExits;
   tiles: TileChar[][];
   enemies: ActiveEnemy[];
   chests: ActiveChest[];
@@ -204,8 +190,17 @@ export interface BattleOutcome {
   message: string;
 }
 
+export interface ClearBonusBreakdown {
+  stageClear: number;
+  lifeBonus: number;
+  noMissBonus: number;
+  allChestsBonus: number;
+  allEnemiesBonus: number;
+  total: number;
+}
+
 export interface GameRunState {
-  deckId: DeckId;
+  stageId: GameStageId;
   worldName: string;
   rooms: Record<string, RoomState>;
   currentRx: number;
@@ -216,7 +211,6 @@ export interface GameRunState {
   maxCombo: number;
   correctCount: number;
   wrongCount: number;
-  elapsedMs: number;
   status: 'playing' | 'battle' | 'victory' | 'gameover';
   toast: { text: string; timer: number } | null;
   shakeTimer: number;

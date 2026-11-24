@@ -1,12 +1,18 @@
 import { useCallback, useState } from 'react';
-import { DECKS, type DeckId } from '../data/decks';
-import { formatJapaneseTime } from '../utils/formatTime';
-import { recordGameResult, type AppRecords } from '../utils/storage';
+import type { GameStageId } from '../data/decks';
+import {
+  getClearedStageCount,
+  getTotalGameHighScore,
+  recordGameResult,
+  resetGameRecords,
+  type AppRecords,
+  type ScoreRank,
+} from '../utils/storage';
 import { GameCanvas, type GameEndSummary } from './GameCanvas';
-import { WORLD_THEMES } from './worlds';
+import { WORLD_THEME_LIST, WORLD_THEMES } from './worlds';
 
 interface GameModeProps {
-  initialDeckId: DeckId | null;
+  initialStageId: GameStageId | null;
   records: AppRecords;
   soundEnabled: boolean;
   onToggleSound: () => void;
@@ -15,35 +21,39 @@ interface GameModeProps {
 }
 
 export function GameMode({
-  initialDeckId,
+  initialStageId,
   records,
   soundEnabled,
   onToggleSound,
   onRecordsChange,
   onBackHome,
 }: GameModeProps) {
-  const [selectedDeckId, setSelectedDeckId] = useState<DeckId | null>(initialDeckId);
+  const [selectedStageId, setSelectedStageId] = useState<GameStageId | null>(initialStageId);
   const [runNonce, setRunNonce] = useState(1);
+  const [showResetModal, setShowResetModal] = useState(false);
   const [endSummary, setEndSummary] = useState<
-    (GameEndSummary & { isNewHighScore: boolean }) | null
+    (GameEndSummary & { isNewHighScore: boolean; rank: ScoreRank }) | null
   >(null);
 
-  const handleStartWorld = (deckId: DeckId) => {
-    setSelectedDeckId(deckId);
+  const totalHighScore = getTotalGameHighScore(records);
+  const clearedCount = getClearedStageCount(records);
+  const hasAnyGameRecord = Object.keys(records.game).length > 0;
+
+  const handleStartWorld = (stageId: GameStageId) => {
+    setSelectedStageId(stageId);
     setEndSummary(null);
     setRunNonce((n) => n + 1);
   };
 
   const handleGameEnd = useCallback(
     (summary: GameEndSummary) => {
-      const { records: nextRecords, isNewHighScore } = recordGameResult(
-        summary.deckId,
+      const { records: nextRecords, isNewHighScore, rank } = recordGameResult(
+        summary.stageId,
         summary.score,
-        summary.elapsedMs,
         summary.cleared,
       );
       onRecordsChange(nextRecords);
-      setEndSummary({ ...summary, isNewHighScore });
+      setEndSummary({ ...summary, isNewHighScore, rank });
     },
     [onRecordsChange],
   );
@@ -53,6 +63,12 @@ export function GameMode({
     setRunNonce((n) => n + 1);
   };
 
+  const handleConfirmReset = () => {
+    const next = resetGameRecords();
+    onRecordsChange(next);
+    setShowResetModal(false);
+  };
+
   return (
     <div className="game-page">
       <header className="top-bar top-bar-dark">
@@ -60,50 +76,75 @@ export function GameMode({
           type="button"
           className="nav-pill nav-pill-dark"
           onClick={() => {
-            if (selectedDeckId) {
-              setSelectedDeckId(null);
+            if (selectedStageId) {
+              setSelectedStageId(null);
               setEndSummary(null);
             } else {
               onBackHome();
             }
           }}
         >
-          ◀ {selectedDeckId ? 'もどる' : 'ホーム'}
+          ◀ {selectedStageId ? 'もどる' : 'ホーム'}
         </button>
 
         <div className="top-bar-center">
           <span className="game-header-title">⚔️ けいさんクエスト</span>
         </div>
 
-        <button
-          type="button"
-          className="nav-pill nav-pill-dark sound-pill"
-          onClick={onToggleSound}
-        >
-          {soundEnabled ? '🔊 おとON' : '🔇 おとOFF'}
-        </button>
+        <div className="top-bar-actions">
+          {selectedStageId && !endSummary && (
+            <button
+              type="button"
+              className="nav-pill nav-pill-dark"
+              onClick={handleRetry}
+              title="あたらしい ランダムマップで やりなおす"
+              aria-label="あたらしい ランダムマップで やりなおす"
+            >
+              🎲<span className="hide-xs"> やりなおす</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="nav-pill nav-pill-dark sound-pill"
+            onClick={onToggleSound}
+            aria-label={soundEnabled ? 'おとを オフにする' : 'おとを オンにする'}
+          >
+            {soundEnabled ? '🔊' : '🔇'}
+          </button>
+        </div>
       </header>
 
-      {!selectedDeckId ? (
+      {!selectedStageId ? (
         <main className="stage-select-main">
           <div className="stage-hero">
             <h1 className="stage-hero-title">どの しんでんを ぼうけん する？</h1>
             <p className="stage-hero-desc">
-              てきを けんで たたいたり、たからばこを あけるときに けいさんもんだいが でるよ！
-              <br />
-              🗝️ かぎを みつけて、おくにいる ボスを たおそう！
+              まいかい マップと ルートが かわるよ！ てきや たからばこを ぜんぶ さがして、
+              ハイスコアと Sランクを めざそう！
             </p>
+            <div className="stage-summary-strip">
+              <div className="summary-chip">
+                <span>💎 ごうけい ハイスコア</span>
+                <strong className="mono-num">{totalHighScore}てん</strong>
+              </div>
+              <div className="summary-chip">
+                <span>👑 クリア</span>
+                <strong>
+                  {clearedCount} / {WORLD_THEME_LIST.length}
+                </strong>
+              </div>
+            </div>
           </div>
 
           <div className="stage-grid">
-            {DECKS.map((deck) => {
-              const theme = WORLD_THEMES[deck.id];
-              const rec = records.game[deck.id];
+            {WORLD_THEME_LIST.map((theme) => {
+              const rec = records.game[theme.stageId];
+              const isMixed = theme.stageId === 'mixed';
               return (
                 <button
-                  key={deck.id}
+                  key={theme.stageId}
                   type="button"
-                  className="stage-card"
+                  className={`stage-card ${isMixed ? 'stage-card-featured' : ''}`}
                   style={
                     {
                       '--stage-bg': theme.palette.wall,
@@ -111,28 +152,36 @@ export function GameMode({
                       '--stage-ground': theme.palette.ground,
                     } as React.CSSProperties
                   }
-                  onClick={() => handleStartWorld(deck.id)}
+                  onClick={() => handleStartWorld(theme.stageId)}
                 >
                   <div className="stage-card-top">
-                    <span className="stage-deck-badge" style={{ backgroundColor: deck.color }}>
-                      {deck.name}
+                    <span
+                      className="stage-deck-badge"
+                      style={{ backgroundColor: theme.badgeColor }}
+                    >
+                      {theme.badgeName}
                     </span>
-                    {rec?.cleared && <span className="stage-clear-crown">👑 クリアずみ</span>}
+                    <div className="stage-card-badges">
+                      {rec?.bestRank && (
+                        <span className={`rank-pill rank-${rec.bestRank.toLowerCase()}`}>
+                          {rec.bestRank}ランク
+                        </span>
+                      )}
+                      {rec?.cleared && <span className="stage-clear-crown">👑 クリア</span>}
+                    </div>
                   </div>
                   <div className="stage-card-title">{theme.worldName}</div>
                   <div className="stage-card-sub">
-                    {deck.subtitle}・ボス：{theme.bossName}
+                    {theme.subtitle}・ボス：{theme.bossName}
                   </div>
                   <div className="stage-card-footer">
                     {rec ? (
                       <>
-                        <span>💎 ハイスコア：{rec.highScore}てん</span>
-                        {rec.cleared && rec.bestTimeMs > 0 && (
-                          <span>⏱ {formatJapaneseTime(rec.bestTimeMs)}</span>
-                        )}
+                        <span className="mono-num">💎 ハイスコア：{rec.highScore}てん</span>
+                        {rec.clearCount > 0 && <span>★ {rec.clearCount}かいクリア</span>}
                       </>
                     ) : (
-                      <span>▶ タップして しゅっぱつ！</span>
+                      <span>🎲 タップして ランダムだんじょんへ！ ▶</span>
                     )}
                   </div>
                 </button>
@@ -141,61 +190,122 @@ export function GameMode({
           </div>
 
           <div className="stage-howto-box">
-            <h2>🎮 あそびかた</h2>
+            <h2>🎮 ハイスコアの コツ</h2>
             <ul>
               <li>
-                <strong>いどう：</strong>
-                スマホは じゅうじキー、パソコンは やじるしキー（または WASD）
+                <strong>ランダムダンジョン：</strong>
+                あそぶたびに へやの つながり・たからばこ・ボスの ばしょが かわるよ！
               </li>
               <li>
-                <strong>けん・しらべる：</strong>
-                「けん」ボタン（または スペースキー）で くさを かったり てきと バトル！
+                <strong>ボーナスてん：</strong>
+                れんぞくせいかいコンボ、せんせいこうげき、レアな「ゴールデンスライム」、
+                たからばこコンプ＆ノーミスで だいボーナス！
               </li>
               <li>
-                <strong>こうりゃく：</strong>
-                ひだりうえの へやで 🗝️ かぎを とって、みぎうえの ボスを 3かい せいかいで たおそう！
+                <strong>そうさ：</strong>
+                スマホは じゅうじキー＆「けん」、パソコンは やじるし（WASD）＆スペースキー
               </li>
             </ul>
+          </div>
+
+          <div className="reset-progress-bar">
+            <button
+              type="button"
+              className="btn-reset-progress"
+              disabled={!hasAnyGameRecord}
+              onClick={() => setShowResetModal(true)}
+            >
+              🗑️ ゲームの しんちょく・ハイスコアを リセットする
+            </button>
           </div>
         </main>
       ) : (
         <main className="game-play-main">
           <GameCanvas
-            deckId={selectedDeckId}
+            stageId={selectedStageId}
+            stageHighScore={records.game[selectedStageId]?.highScore ?? 0}
             runNonce={runNonce}
             onGameEnd={handleGameEnd}
           />
         </main>
       )}
 
+      {/* Reset Progress Confirmation Modal */}
+      {showResetModal && (
+        <div
+          className="battle-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="しんちょくリセットの かくにん"
+          onClick={() => setShowResetModal(false)}
+        >
+          <div className="result-modal is-gameover" onClick={(e) => e.stopPropagation()}>
+            <div className="result-icon" aria-hidden="true">
+              🗑️
+            </div>
+            <h2 className="result-title">ゲームの きろくを リセット する？</h2>
+            <p className="result-desc">
+              1〜5めんの ハイスコア・ランク・クリアきろくが すべて さいしょに もどります。
+              <br />
+              （けいさんカードの ベストタイムは そのまま のこるよ）
+            </p>
+            <div className="result-actions">
+              <button
+                type="button"
+                className="btn btn-danger btn-giant"
+                onClick={handleConfirmReset}
+              >
+                リセットする
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-giant"
+                onClick={() => setShowResetModal(false)}
+              >
+                やめる
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Victory / Game Over Modal */}
       {endSummary && (
         <div className="battle-backdrop" role="dialog" aria-modal="true" aria-label="ぼうけんの けっか">
           <div className={`result-modal ${endSummary.cleared ? 'is-victory' : 'is-gameover'}`}>
-            <div className="result-icon" aria-hidden="true">
-              {endSummary.cleared ? '🏆' : '💫'}
+            <div className="result-top-visual">
+              <span className="result-icon" aria-hidden="true">
+                {endSummary.cleared ? '🏆' : '💫'}
+              </span>
+              {endSummary.cleared && (
+                <span className={`result-rank-badge rank-${endSummary.rank.toLowerCase()}`}>
+                  {endSummary.rank}ランク
+                </span>
+              )}
             </div>
+
             {endSummary.isNewHighScore && endSummary.score > 0 && (
               <div className="new-record-ribbon">✨ ハイスコア こうしん！ ✨</div>
             )}
+
             <h2 className="result-title">
               {endSummary.cleared
-                ? `${WORLD_THEMES[endSummary.deckId].worldName} クリア！`
+                ? `${WORLD_THEMES[endSummary.stageId].worldName} クリア！`
                 : 'ちからつきた…！'}
             </h2>
             <p className="result-desc">
               {endSummary.cleared
-                ? `${WORLD_THEMES[endSummary.deckId].bossName}を たおして トライスターを とりもどしたよ！`
+                ? `${WORLD_THEMES[endSummary.stageId].bossName}を たおして トライスターを とりもどしたよ！`
                 : 'また チャレンジしよう！ いずみで ハートを かいふくできるよ！'}
             </p>
 
             <div className="result-stats-grid">
               <div className="result-stat result-stat-score">
-                <span>スコア</span>
-                <strong>{endSummary.score}てん</strong>
-                {endSummary.clearBonus > 0 && (
-                  <small>（クリアボーナス +{endSummary.clearBonus}てん）</small>
-                )}
+                <span>こんかいの スコア</span>
+                <strong className="mono-num">{endSummary.score}てん</strong>
+                <small className="mono-num">
+                  🏆 ハイスコア：{records.game[endSummary.stageId]?.highScore ?? endSummary.score}てん
+                </small>
               </div>
               <div className="result-stat">
                 <span>せいかい</span>
@@ -206,20 +316,46 @@ export function GameMode({
                 <strong>{endSummary.maxCombo}れんぞく</strong>
               </div>
               <div className="result-stat">
-                <span>タイム</span>
-                <strong>{formatJapaneseTime(endSummary.elapsedMs)}</strong>
+                <span>のこりライフ</span>
+                <strong>♥ {endSummary.heartsLeft}</strong>
               </div>
             </div>
 
+            {endSummary.bonusBreakdown && (
+              <div className="bonus-breakdown-box">
+                <div className="bonus-chip">クリア +{endSummary.bonusBreakdown.stageClear}</div>
+                {endSummary.bonusBreakdown.lifeBonus > 0 && (
+                  <div className="bonus-chip">
+                    ライフ +{endSummary.bonusBreakdown.lifeBonus}
+                  </div>
+                )}
+                {endSummary.bonusBreakdown.noMissBonus > 0 && (
+                  <div className="bonus-chip bonus-chip-gold">
+                    ノーミス +{endSummary.bonusBreakdown.noMissBonus}
+                  </div>
+                )}
+                {endSummary.bonusBreakdown.allChestsBonus > 0 && (
+                  <div className="bonus-chip bonus-chip-gold">
+                    たからばこコンプ +{endSummary.bonusBreakdown.allChestsBonus}
+                  </div>
+                )}
+                {endSummary.bonusBreakdown.allEnemiesBonus > 0 && (
+                  <div className="bonus-chip bonus-chip-gold">
+                    てきぜんめつ +{endSummary.bonusBreakdown.allEnemiesBonus}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="result-actions">
               <button type="button" className="btn btn-primary btn-giant" onClick={handleRetry}>
-                ⚔️ もう いっかい あそぶ
+                🎲 あたらしい マップで もう いっかい！
               </button>
               <button
                 type="button"
                 className="btn btn-secondary"
                 onClick={() => {
-                  setSelectedDeckId(null);
+                  setSelectedStageId(null);
                   setEndSummary(null);
                 }}
               >

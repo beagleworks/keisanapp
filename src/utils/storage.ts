@@ -1,4 +1,6 @@
-import type { DeckId } from '../data/decks';
+import { ALL_GAME_STAGE_IDS, type DeckId, type GameStageId } from '../data/decks';
+
+export type ScoreRank = 'S' | 'A' | 'B' | 'C';
 
 export interface FlashcardRecord {
   bestTimeMs: number;
@@ -9,14 +11,16 @@ export interface FlashcardRecord {
 
 export interface GameStageRecord {
   highScore: number;
-  bestTimeMs: number;
+  bestRank?: ScoreRank;
   cleared: boolean;
   clearCount: number;
+  /** Optional legacy field retained for backward compatibility */
+  bestTimeMs?: number;
 }
 
 export interface AppRecords {
   flashcards: Partial<Record<DeckId, FlashcardRecord>>;
-  game: Partial<Record<DeckId, GameStageRecord>>;
+  game: Partial<Record<GameStageId, GameStageRecord>>;
   soundEnabled: boolean;
 }
 
@@ -27,6 +31,26 @@ const DEFAULT_RECORDS: AppRecords = {
   game: {},
   soundEnabled: true,
 };
+
+const RANK_ORDER: Record<ScoreRank, number> = {
+  C: 1,
+  B: 2,
+  A: 3,
+  S: 4,
+};
+
+export function calculateScoreRank(score: number, stageId: GameStageId): ScoreRank {
+  if (stageId === 'mixed') {
+    if (score >= 3200) return 'S';
+    if (score >= 2400) return 'A';
+    if (score >= 1600) return 'B';
+    return 'C';
+  }
+  if (score >= 2500) return 'S';
+  if (score >= 1900) return 'A';
+  if (score >= 1300) return 'B';
+  return 'C';
+}
 
 export function loadRecords(): AppRecords {
   try {
@@ -71,28 +95,47 @@ export function recordFlashcardClear(
 }
 
 export function recordGameResult(
-  deckId: DeckId,
+  stageId: GameStageId,
   score: number,
-  elapsedMs: number,
   cleared: boolean,
-): { records: AppRecords; isNewHighScore: boolean } {
+): { records: AppRecords; isNewHighScore: boolean; rank: ScoreRank } {
   const records = loadRecords();
-  const prev = records.game[deckId];
+  const prev = records.game[stageId];
   const isNewHighScore = !prev || score > prev.highScore;
+  const rank = calculateScoreRank(score, stageId);
 
-  records.game[deckId] = {
+  const prevRank = prev?.bestRank;
+  const bestRank =
+    cleared && (!prevRank || RANK_ORDER[rank] > RANK_ORDER[prevRank]) ? rank : prevRank;
+
+  records.game[stageId] = {
     highScore: prev ? Math.max(prev.highScore, score) : score,
-    bestTimeMs: cleared
-      ? prev && prev.cleared
-        ? Math.min(prev.bestTimeMs, elapsedMs)
-        : elapsedMs
-      : (prev?.bestTimeMs ?? 0),
+    bestRank,
     cleared: Boolean(prev?.cleared || cleared),
     clearCount: (prev?.clearCount ?? 0) + (cleared ? 1 : 0),
   };
 
   saveRecords(records);
-  return { records, isNewHighScore };
+  return { records, isNewHighScore, rank };
+}
+
+/** Reset all saved game progress (high scores, ranks, clears) while preserving flashcard records */
+export function resetGameRecords(): AppRecords {
+  const records = loadRecords();
+  records.game = {};
+  saveRecords(records);
+  return records;
+}
+
+export function getTotalGameHighScore(records: AppRecords): number {
+  return ALL_GAME_STAGE_IDS.reduce(
+    (sum, stageId) => sum + (records.game[stageId]?.highScore ?? 0),
+    0,
+  );
+}
+
+export function getClearedStageCount(records: AppRecords): number {
+  return ALL_GAME_STAGE_IDS.filter((stageId) => records.game[stageId]?.cleared).length;
 }
 
 export function saveSoundEnabled(enabled: boolean): void {

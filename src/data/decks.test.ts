@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { DECK_MAP, DECKS, generateChoices, shuffleCards } from './decks';
+import {
+  ALL_CARDS,
+  buildStageQuestionQueue,
+  DECK_MAP,
+  DECKS,
+  generateChoices,
+  getCardsForStage,
+  shuffleCards,
+} from './decks';
 
 describe('HappyLilac large-size math card decks', () => {
   it('contains all 4 decks with exact card counts', () => {
@@ -8,6 +16,8 @@ describe('HappyLilac large-size math card decks', () => {
     expect(DECK_MAP.tashizan2.cards).toHaveLength(36);
     expect(DECK_MAP.hikizan1.cards).toHaveLength(45);
     expect(DECK_MAP.hikizan2.cards).toHaveLength(36);
+    expect(ALL_CARDS).toHaveLength(162);
+    expect(getCardsForStage('mixed')).toHaveLength(162);
   });
 
   it('tashizan1 matches HappyLilac large cards (10までのたしざん, 45 cards)', () => {
@@ -18,7 +28,6 @@ describe('HappyLilac large-size math card decks', () => {
     expect(exprs[9]).toBe('2+1=3');
     expect(exprs[exprs.length - 1]).toBe('9+1=10');
 
-    // No zeros, all sums <= 10, all unique
     expect(new Set(exprs).size).toBe(45);
     for (const c of cards) {
       expect(c.left).toBeGreaterThanOrEqual(1);
@@ -85,6 +94,16 @@ describe('HappyLilac large-size math card decks', () => {
       expect(c.answer).toBeGreaterThanOrEqual(2);
       expect(c.answer).toBeLessThanOrEqual(9);
     }
+  });
+
+  it('buildStageQuestionQueue for mixed stage includes all 162 unique cards and balances all 4 decks', () => {
+    const queue = buildStageQuestionQueue('mixed');
+    expect(queue).toHaveLength(162);
+    expect(new Set(queue.map((c) => c.id)).size).toBe(162);
+
+    // Every block of 4 cards in the first 36 rounds has 1 card from each of the 4 decks
+    const firstFourDecks = new Set(queue.slice(0, 4).map((c) => c.deckId));
+    expect(firstFourDecks.size).toBe(4);
   });
 
   it('shuffleCards returns a permutation without mutating the source array', () => {

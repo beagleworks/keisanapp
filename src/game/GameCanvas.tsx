@@ -1,24 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { DECK_MAP, type DeckId } from '../data/decks';
-import { formatStopwatch } from '../utils/formatTime';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+import type { GameStageId } from '../data/decks';
 import { sound } from '../utils/sound';
 import { BattleOverlay } from './BattleOverlay';
 import {
   addFloatingText,
-  calculateClearBonus,
+  calculateClearBonusBreakdown,
   checkRoomTransition,
   createBattleRequest,
   createInitialGameState,
   finishRoomTransition,
   getCurrentRoom,
-  getRunElapsedMs,
   getSwordHitbox,
   isBoxBlocked,
   resolveBattleAnswer,
   roomKeyOf,
   spawnParticles,
   startRoomTransition,
+  unlockDoorAt,
 } from './engine';
+import { GRID_COLS, GRID_ROWS } from './generator';
 import { getDirectionVector, renderGameFrame } from './sprites';
 import { TouchControls } from './TouchControls';
 import {
@@ -29,17 +29,18 @@ import {
   TILE_SIZE,
   type BattleOutcome,
   type BattleRequest,
+  type ClearBonusBreakdown,
   type Direction,
   type GameRunState,
+  type RoomExits,
 } from './types';
 import { WORLD_THEMES } from './worlds';
 
 export interface GameEndSummary {
-  deckId: DeckId;
+  stageId: GameStageId;
   cleared: boolean;
   score: number;
-  clearBonus: number;
-  elapsedMs: number;
+  bonusBreakdown: ClearBonusBreakdown | null;
   correctCount: number;
   wrongCount: number;
   maxCombo: number;
@@ -47,9 +48,21 @@ export interface GameEndSummary {
 }
 
 interface GameCanvasProps {
-  deckId: DeckId;
+  stageId: GameStageId;
+  stageHighScore: number;
   runNonce: number;
   onGameEnd: (summary: GameEndSummary) => void;
+}
+
+interface MinimapCellInfo {
+  key: string;
+  rx: number;
+  ry: number;
+  visited: boolean;
+  isHere: boolean;
+  isBoss: boolean;
+  hasUnopenedChest: boolean;
+  exits: RoomExits;
 }
 
 interface HudSnapshot {
@@ -60,25 +73,31 @@ interface HudSnapshot {
   combo: number;
   hasFlameSword: boolean;
   roomName: string;
-  currentRx: number;
-  currentRy: number;
-  visitedKeys: string[];
-  chestRoomKeys: string[];
-  bossRoomKey: string;
-  elapsedMs: number;
+  minimap: MinimapCellInfo[][];
   toastText: string | null;
 }
 
 function buildHudSnapshot(state: GameRunState): HudSnapshot {
   const room = getCurrentRoom(state);
-  const visitedKeys: string[] = [];
-  const chestRoomKeys: string[] = [];
-  let bossRoomKey = '2,0';
+  const minimap: MinimapCellInfo[][] = [];
 
-  for (const [key, r] of Object.entries(state.rooms)) {
-    if (r.visited) visitedKeys.push(key);
-    if (r.chests.some((c) => !c.opened)) chestRoomKeys.push(key);
-    if (r.isBossRoom) bossRoomKey = key;
+  for (let ry = 0; ry < GRID_ROWS; ry++) {
+    const rowCells: MinimapCellInfo[] = [];
+    for (let rx = 0; rx < GRID_COLS; rx++) {
+      const key = roomKeyOf(rx, ry);
+      const r = state.rooms[key];
+      rowCells.push({
+        key,
+        rx,
+        ry,
+        visited: r.visited,
+        isHere: state.currentRx === rx && state.currentRy === ry,
+        isBoss: r.isBossRoom,
+        hasUnopenedChest: r.chests.some((c) => !c.opened),
+        exits: { ...r.exits },
+      });
+    }
+    minimap.push(rowCells);
   }
 
   return {
@@ -89,45 +108,51 @@ function buildHudSnapshot(state: GameRunState): HudSnapshot {
     combo: state.combo,
     hasFlameSword: state.player.hasFlameSword,
     roomName: room.name,
-    currentRx: state.currentRx,
-    currentRy: state.currentRy,
-    visitedKeys,
-    chestRoomKeys,
-    bossRoomKey,
-    elapsedMs: state.elapsedMs,
+    minimap,
     toastText: state.toast ? state.toast.text : null,
   };
 }
 
-export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
-  const theme = WORLD_THEMES[deckId];
-  const deck = DECK_MAP[deckId];
+function useLazyRef<T>(init: () => T): RefObject<T> {
+  const ref = useRef<T | null>(null);
+  if (ref.current === null) {
+    ref.current = init();
+  }
+  return ref as RefObject<T>;
+}
+
+export function GameCanvas({ stageId, stageHighScore, runNonce, onGameEnd }: GameCanvasProps) {
+  const theme = WORLD_THEMES[stageId];
+  const runKey = `${stageId}:${runNonce}`;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef<GameRunState>(createInitialGameState(deckId));
-  const heldKeysRef = useRef<Set<string>>(new Set());
+  const stateRef = useLazyRef<GameRunState>(() => createInitialGameState(stageId));
+  const initializedRunKeyRef = useRef<string>(runKey);
+  const heldKeysRef = useLazyRef<Set<string>>(() => new Set());
   const touchDirRef = useRef<Direction | null>(null);
   const lockedDoorNoticeCooldownRef = useRef<number>(0);
   const endedRef = useRef<boolean>(false);
-  const runStartMsRef = useRef<number>(performance.now());
 
   const [touchDir, setTouchDir] = useState<Direction | null>(null);
   const [activeBattle, setActiveBattle] = useState<BattleRequest | null>(null);
   const [hud, setHud] = useState<HudSnapshot>(() => buildHudSnapshot(stateRef.current));
 
-  // Re-initialize run when deckId or runNonce changes
+  // Re-initialize a fresh random dungeon whenever stageId or runNonce changes
   useEffect(() => {
-    const initial = createInitialGameState(deckId);
-    stateRef.current = initial;
-    heldKeysRef.current.clear();
-    touchDirRef.current = null;
-    endedRef.current = false;
-    runStartMsRef.current = performance.now();
-    setTouchDir(null);
-    setActiveBattle(null);
-    setHud(buildHudSnapshot(initial));
+    if (initializedRunKeyRef.current !== runKey) {
+      const initial = createInitialGameState(stageId);
+      stateRef.current = initial;
+      initializedRunKeyRef.current = runKey;
+      heldKeysRef.current.clear();
+      touchDirRef.current = null;
+      lockedDoorNoticeCooldownRef.current = 0;
+      endedRef.current = false;
+      setTouchDir(null);
+      setActiveBattle(null);
+      setHud(buildHudSnapshot(initial));
+    }
     sound.playStart();
-  }, [deckId, runNonce]);
+  }, [stageId, runKey, stateRef, heldKeysRef]);
 
   const handleTouchDirChange = useCallback((dir: Direction | null) => {
     touchDirRef.current = dir;
@@ -166,7 +191,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         };
       }
       const outcome = resolveBattleAnswer(state, activeBattle, choice, speedBonus);
-      state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
       // Keep the world paused until the battle feedback overlay closes so the player sees the action resume
       if (state.status === 'playing') {
         state.status = 'battle';
@@ -197,18 +221,17 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
     if (state.status === 'gameover' && !endedRef.current) {
       endedRef.current = true;
       onGameEnd({
-        deckId,
+        stageId,
         cleared: false,
         score: state.score,
-        clearBonus: 0,
-        elapsedMs: state.elapsedMs,
+        bonusBreakdown: null,
         correctCount: state.correctCount,
         wrongCount: state.wrongCount,
         maxCombo: state.maxCombo,
         heartsLeft: 0,
       });
     }
-  }, [deckId, onGameEnd]);
+  }, [stageId, onGameEnd]);
 
   // Keyboard controls for movement and sword
   useEffect(() => {
@@ -288,22 +311,21 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
       const state = stateRef.current;
       const timeSec = now / 1000;
 
-      if (state.status === 'playing' || state.status === 'battle') {
-        state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
-      }
-
       if (state.shakeTimer > 0) {
         state.shakeTimer = Math.max(0, state.shakeTimer - dt);
       }
+      let toastExpired = false;
       if (state.toast) {
         state.toast.timer -= dt;
-        if (state.toast.timer <= 0) state.toast = null;
+        if (state.toast.timer <= 0) {
+          state.toast = null;
+          toastExpired = true;
+        }
       }
       if (lockedDoorNoticeCooldownRef.current > 0) {
         lockedDoorNoticeCooldownRef.current -= dt;
       }
 
-      // Room scrolling transition
       if (state.status === 'playing' && state.transition) {
         state.transition.progress += dt / 0.24;
         if (state.transition.progress >= 1) {
@@ -314,14 +336,12 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         const room = getCurrentRoom(state);
         const { player } = state;
 
-        // Timers
         if (player.attackTimer > 0) player.attackTimer = Math.max(0, player.attackTimer - dt);
         if (player.attackCooldown > 0) {
           player.attackCooldown = Math.max(0, player.attackCooldown - dt);
         }
         if (player.invulnTimer > 0) player.invulnTimer = Math.max(0, player.invulnTimer - dt);
 
-        // Player Movement
         const halfW = 9;
         const halfH = 9;
         const speed = 136;
@@ -337,7 +357,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         vx = vx * speed + player.knockVx;
         vy = vy * speed + player.knockVy;
 
-        // Dampen knockback
         player.knockVx *= Math.pow(0.001, dt);
         player.knockVy *= Math.pow(0.001, dt);
         if (Math.abs(player.knockVx) < 4) player.knockVx = 0;
@@ -360,7 +379,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         if (!isBoxBlocked(room, nextX, player.y, halfW, halfH)) {
           player.x = nextX;
         } else if (ix !== 0 && iy === 0) {
-          // Gentle vertical corner nudge
           for (const nudge of [-8, 8, -14, 14]) {
             if (!isBoxBlocked(room, nextX, player.y + nudge, halfW, halfH)) {
               player.y += Math.sign(nudge) * Math.min(Math.abs(nudge), 95 * dt);
@@ -382,7 +400,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           }
         }
 
-        // Check Locked Boss Door proximity ('L')
+        // Check Locked Boss Door proximity ('L') on any wall
         for (let r = 0; r < ROOM_ROWS; r++) {
           for (let c = 0; c < ROOM_COLS; c++) {
             if (room.tiles[r][c] === 'L') {
@@ -391,12 +409,12 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
               if (Math.hypot(player.x - lx, player.y - ly) < 30) {
                 if (player.keys > 0) {
                   player.keys -= 1;
-                  room.tiles[r][c] = ',';
+                  unlockDoorAt(room, c, r);
                   sound.playSecret();
                   spawnParticles(state, lx, ly, '#FDE047', 22);
-                  addFloatingText(state, lx - 12, ly - 14, 'オープン！', '#FDE047');
+                  addFloatingText(state, lx, ly - 14, 'オープン！', '#FDE047');
                   state.toast = {
-                    text: '🔓 しんでんの とびらが ひらいた！ みぎの ボスのへやへ すすもう！',
+                    text: '🔓 ボスの とびらが ひらいた！ さあ すすもう！',
                     timer: 3.6,
                   };
                   setHud(buildHudSnapshot(state));
@@ -404,7 +422,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
                   lockedDoorNoticeCooldownRef.current = 2.4;
                   sound.playWrong();
                   state.toast = {
-                    text: '🔒 かぎが ひつようだよ！ ひだりうえの へやの たからばこを あけよう！',
+                    text: '🔒 かぎが ひつようだよ！ たからばこの へやを さがそう！',
                     timer: 3.2,
                   };
                   setHud(buildHudSnapshot(state));
@@ -444,13 +462,12 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           }
         }
 
-        // Check Sword Interactions (bushes, chests, enemies)
+        // Sword interactions
         let battleTriggered: BattleRequest | null = null;
 
         if (player.attackTimer > 0) {
           const box = getSwordHitbox(player);
 
-          // Cut bushes
           const minC = Math.max(0, Math.floor(box.x / TILE_SIZE));
           const maxC = Math.min(ROOM_COLS - 1, Math.floor((box.x + box.w) / TILE_SIZE));
           const minR = Math.max(0, Math.floor(box.y / TILE_SIZE));
@@ -464,11 +481,14 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
                 const by = r * TILE_SIZE + TILE_SIZE / 2;
                 spawnParticles(state, bx, by, theme.palette.bushHighlight, 10);
                 sound.playNextCard();
-                if (Math.random() < 0.45) {
+                if (Math.random() < 0.5) {
+                  const roll = Math.random();
                   const dropKind =
-                    player.hearts < player.maxHearts && Math.random() < 0.35
+                    player.hearts < player.maxHearts && roll < 0.35
                       ? 'heart'
-                      : 'rupeeGreen';
+                      : roll > 0.85
+                        ? 'rupeeBlue'
+                        : 'rupeeGreen';
                   room.pickups.push({
                     id: `bush-${r}-${c}-${Math.floor(now)}`,
                     x: bx,
@@ -482,7 +502,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
             }
           }
 
-          // Slash enemy -> First-strike Math Battle!
           for (const enemy of room.enemies) {
             if (!enemy.alive) continue;
             const er = enemy.kind === 'boss' ? 20 : 12;
@@ -506,7 +525,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
             }
           }
 
-          // Slash / inspect chest -> Chest Math Quiz!
           if (!battleTriggered) {
             for (const chest of room.chests) {
               if (chest.opened) continue;
@@ -532,7 +550,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           }
         }
 
-        // Also allow bumping directly into a closed chest (when not invulnerable) to open it
         if (!battleTriggered && player.invulnTimer <= 0) {
           for (const chest of room.chests) {
             if (chest.opened) continue;
@@ -551,7 +568,7 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           }
         }
 
-        // Update Enemies AI & Contact Check
+        // Enemies AI & contact check
         for (const enemy of room.enemies) {
           if (!enemy.alive) continue;
           if (enemy.hurtTimer > 0) enemy.hurtTimer = Math.max(0, enemy.hurtTimer - dt);
@@ -560,7 +577,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           if (enemy.aiTimer <= 0) {
             enemy.aiTimer = 0.8 + Math.random() * 1.1;
             if (enemy.kind === 'boss' && Math.random() < 0.65) {
-              // Boss gently pursues player
               const dx = player.x - enemy.x;
               const dy = player.y - enemy.y;
               if (Math.abs(dx) > Math.abs(dy)) {
@@ -598,7 +614,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
             enemy.aiTimer = 0.25;
           }
 
-          // Contact with player triggers counter-battle
           if (!battleTriggered && player.invulnTimer <= 0) {
             const touchDist = enemy.kind === 'boss' ? 28 : 21;
             if (Math.hypot(player.x - enemy.x, player.y - enemy.y) < touchDist) {
@@ -630,6 +645,11 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
               sound.playPickup();
               spawnParticles(state, pickup.x, pickup.y, '#38BDF8', 10);
               addFloatingText(state, pickup.x, pickup.y - 10, '+50', '#38BDF8');
+            } else if (pickup.kind === 'rupeeGold') {
+              state.score += 100;
+              sound.playSecret();
+              spawnParticles(state, pickup.x, pickup.y, '#FACC15', 14);
+              addFloatingText(state, pickup.x, pickup.y - 12, '+100!!', '#FDE047');
             } else if (pickup.kind === 'heart') {
               sound.playPickup();
               if (player.hearts < player.maxHearts) {
@@ -642,19 +662,17 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
               spawnParticles(state, pickup.x, pickup.y, '#FB7185', 10);
             } else if (pickup.kind === 'tristar' && !endedRef.current) {
               endedRef.current = true;
-              state.elapsedMs = getRunElapsedMs(runStartMsRef.current, performance.now());
-              const clearBonus = calculateClearBonus(player.hearts);
-              state.score += clearBonus;
+              const bonusBreakdown = calculateClearBonusBreakdown(state);
+              state.score += bonusBreakdown.total;
               state.status = 'victory';
               sound.playVictory();
               spawnParticles(state, pickup.x, pickup.y, '#FDE047', 30);
               setHud(buildHudSnapshot(state));
               onGameEnd({
-                deckId,
+                stageId,
                 cleared: true,
                 score: state.score,
-                clearBonus,
-                elapsedMs: state.elapsedMs,
+                bonusBreakdown,
                 correctCount: state.correctCount,
                 wrongCount: state.wrongCount,
                 maxCombo: state.maxCombo,
@@ -664,7 +682,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
           }
         }
 
-        // Check Room Transition
         if (!battleTriggered && state.status === 'playing') {
           const exitDir = checkRoomTransition(state);
           if (exitDir) {
@@ -677,7 +694,6 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         }
       }
 
-      // Update particles and floating texts
       state.particles = state.particles.filter((pt) => {
         pt.x += pt.vx * dt;
         pt.y += pt.vy * dt;
@@ -693,16 +709,14 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
         return ft.life > 0;
       });
 
-      // Render Canvas
       const canvas = canvasRef.current;
       const ctx = canvas?.getContext('2d');
       if (ctx) {
         renderGameFrame(ctx, state, theme.palette, timeSec);
       }
 
-      // Sync React HUD at ~10Hz
       hudSyncAccum += dt;
-      if (hudSyncAccum >= 0.1) {
+      if (toastExpired || (state.status === 'playing' && hudSyncAccum >= 0.1)) {
         hudSyncAccum = 0;
         setHud(buildHudSnapshot(state));
       }
@@ -712,30 +726,41 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
 
     rafId = window.requestAnimationFrame(step);
     return () => window.cancelAnimationFrame(rafId);
-  }, [deckId, theme.palette, openBattle, onGameEnd]);
+  }, [stageId, theme.palette, openBattle, onGameEnd]);
+
+  const displayBest = Math.max(stageHighScore, hud.score);
 
   return (
     <div className="zelda-play-shell">
-      {/* Classic NES Zelda-inspired Top HUD */}
+      {/* Classic NES Zelda-inspired High-Score HUD */}
       <div className="zelda-hud">
         <div className="hud-minimap" aria-label="ダンジョンマップ">
-          {[0, 1].map((ry) => (
+          {hud.minimap.map((row, ry) => (
             <div key={ry} className="minimap-row">
-              {[0, 1, 2].map((rx) => {
-                const key = roomKeyOf(rx, ry);
-                const isHere = hud.currentRx === rx && hud.currentRy === ry;
-                const visited = hud.visitedKeys.includes(key);
-                const isBoss = key === hud.bossRoomKey;
-                const hasChest = hud.chestRoomKeys.includes(key);
+              {row.map((cell) => {
+                const showRightDoor = cell.visited && cell.exits.right !== 'none';
+                const showDownDoor = cell.visited && cell.exits.down !== 'none';
                 return (
                   <div
-                    key={key}
-                    className={`minimap-cell ${visited ? 'is-visited' : ''} ${
-                      isHere ? 'is-here' : ''
-                    } ${isBoss ? 'is-boss' : ''}`}
-                    title={isBoss ? 'ボスの へや' : undefined}
+                    key={cell.key}
+                    className={`minimap-cell ${cell.visited ? 'is-visited' : ''} ${
+                      cell.isHere ? 'is-here' : ''
+                    } ${cell.isBoss ? 'is-boss' : ''} ${
+                      showRightDoor
+                        ? cell.exits.right === 'locked'
+                          ? 'door-right-locked'
+                          : 'door-right-open'
+                        : ''
+                    } ${
+                      showDownDoor
+                        ? cell.exits.down === 'locked'
+                          ? 'door-down-locked'
+                          : 'door-down-open'
+                        : ''
+                    }`}
+                    title={cell.isBoss ? 'ボスの へや' : undefined}
                   >
-                    {isHere ? '●' : isBoss ? '👑' : hasChest && visited ? '■' : ''}
+                    {cell.isHere ? '●' : cell.isBoss ? '👑' : cell.hasUnopenedChest && cell.visited ? '■' : ''}
                   </div>
                 );
               })}
@@ -745,15 +770,16 @@ export function GameCanvas({ deckId, runNonce, onGameEnd }: GameCanvasProps) {
 
         <div className="hud-center-info">
           <div className="hud-room-line">
-            <span className="hud-deck-chip" style={{ backgroundColor: deck.color }}>
-              {deck.shortName}
+            <span className="hud-deck-chip" style={{ backgroundColor: theme.badgeColor }}>
+              {theme.shortBadge}
             </span>
             <span className="hud-room-name">{hud.roomName}</span>
           </div>
           <div className="hud-stats-line">
-            <span className="hud-stat">💎 {hud.score}</span>
+            <span className="hud-stat mono-num">💎 {hud.score}</span>
+            <span className="hud-stat hud-stat-best mono-num">🏆 {displayBest}</span>
             <span className="hud-stat">🗝️ {hud.keys}</span>
-            <span className="hud-stat mono-num">⏱ {formatStopwatch(hud.elapsedMs)}</span>
+            {hud.combo >= 2 && <span className="hud-stat hud-stat-combo">🔥{hud.combo}</span>}
           </div>
         </div>
 
