@@ -101,7 +101,7 @@ stateDiagram-v2
         Question --> Answer: カード / ボタン / Space
         Answer --> Question: 次のカードへ（最終カード以外）
         Answer --> Finished: 最終カード完了（記録保存）
-        Finished --> Question: もう いっかい！（500ms 誤操作ガードあり）
+        Finished --> Question: 「もう いっかい！」ボタン / Space（Space は完了後 500ms ガードあり）
     }
 
     FlashcardMode --> HomeScreen: 「◀ もどる」/「ホームへ もどる」
@@ -177,7 +177,7 @@ stateDiagram-v2
 | `ready` | カード表紙（単元名・枚数・ベストタイム）・「スタート！」ボタン・問題一覧リンク | シャッフル＆タイマー開始して `question` へ遷移 |
 | `question` | 計算式（例：`7 ＋ 8`）を大きく表示 | 答えを表示して `answer` へ遷移（効果音 `playReveal`） |
 | `answer` | 計算式＋答え（例：`7 ＋ 8 ＝ 15`）を表示 | 次のカードがあれば `question` へ（`playNextCard`）、最終カードなら計測確定・記録保存して `finished` へ（`playFanfare`） |
-| `finished` | はなまるバッジ・クリアタイム・1枚あたり平均秒数・ベストタイム・新記録リボン | 完了から **500ms 経過後** のみ `startSession()` で再挑戦（連打による結果画面スキップ防止） |
+| `finished` | はなまるバッジ・クリアタイム・1枚あたり平均秒数・ベストタイム・新記録リボン | `Space` キー（`handleAdvance()` 経由）は完了から **500ms 経過後** のみ `startSession()` で再挑戦（連打による結果画面スキップ防止）。結果画面の「もう いっかい！」ボタンは `startSession()` を直接呼び出し即時再挑戦可能 |
 
 ### 5.2 操作・補助機能
 
