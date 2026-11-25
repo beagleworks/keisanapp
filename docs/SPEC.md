@@ -479,6 +479,9 @@ pnpm preview     # 本番ビルドのローカルプレビュー
 
 ### 10.3 CI/CD（GitHub Pages）
 
+- **公開 URL**: `https://beagleworks.github.io/keisanapp/`
+- **前提設定**: GitHub リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定する。
+
 `.github/workflows/deploy.yml` により、`main` ブランチへのプッシュまたは手動実行 (`workflow_dispatch`) 時に以下のパイプラインを自動実行する。
 
 1. Node.js 22 + `pnpm/action-setup@v4` をセットアップ
