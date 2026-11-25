@@ -463,7 +463,7 @@ export interface AppRecords {
 | テストファイル | 主な検証内容 |
 | --- | --- |
 | `src/data/decks.test.ts` | 4デッキの正確な枚数（45/36/45/36）・全162問の境界値と計算式整合性、`mixed` キューの全162問網羅＆4単元バランス、`shuffleCards` の非破壊性、`generateChoices` の4択一意性・正解包含 |
-| `src/game/engine.test.ts` | **100シード×全5ステージのランダムダンジョンファズテスト**（全部屋サイズ・全配置物の歩行可能セル検証・カギ扉とボス入口の1対1整合・スタートから非ボス5部屋へのBFS到達保証・スタート/ボス座標の多様性）、`unlockDoorAt`、ステージ5の4HPボス戦＆全クリアボーナス内訳、`calculateScoreRank`、および `resetGameRecords`（フラッシュカード記録の非破壊保持） |
+| `src/game/engine.test.ts` | **全5ステージ合計100シード（各ステージ20シード）のランダムダンジョンファズテスト**（全部屋サイズ・全配置物の歩行可能セル検証・カギ扉とボス入口の1対1整合・スタートから非ボス5部屋へのBFS到達保証・スタート/ボス座標の多様性）、`unlockDoorAt`、ステージ5の4HPボス戦＆全クリアボーナス内訳、`calculateScoreRank`、および `resetGameRecords`（フラッシュカード記録の非破壊保持） |
 
 ### 10.2 開発・検証コマンド
 
